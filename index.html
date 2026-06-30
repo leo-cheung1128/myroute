@@ -5,103 +5,155 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KMB ETA</title>
 
-<!-- ✅ iPhone app mode -->
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="KMB ETA">
-
-<!-- ✅ App icon -->
 <link rel="apple-touch-icon" href="icon.png">
-    
+
 <style>
 body {
+    background: #111;
+    color: white;
     font-family: Arial;
-    background: #f5f5f5;
-    padding: 20px;
+    margin: 0;
+    padding: 10px;
 }
-h1 { text-align: center; }
+
 .container {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 12px;
 }
+
+/* cards */
 .card {
-    background: white;
+    background: #1e1e1e;
     padding: 15px;
-    border-radius: 10px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    border-radius: 12px;
 }
-.route {
-    font-size: 22px;
+
+.route-number {
+    font-size: 36px;
     font-weight: bold;
 }
-.stop {
-    color: #666;
-    margin-top: 4px;
+
+.destination {
+    font-size: 20px;
 }
+
+.stop {
+    font-size: 14px;
+    color: #aaa;
+}
+
 .eta {
     margin-top: 10px;
+}
+
+/* ETA styles */
+.primary {
+    color: #00ff88;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+.secondary {
+    color: #ccc;
+    font-size: 18px;
+}
+
+.remark {
+    color: orange;
+    font-size: 13px;
+}
+
+/* ✅ global timestamp */
+.global-timestamp {
+    position: fixed;
+    bottom: 6px;
+    left: 10px;
+    font-size: 12px;
+    color: #888;
+    opacity: 0.7;
 }
 </style>
 </head>
 
 <body>
 
-<h1>KMB 到站時間</h1>
 <div id="etaContainer" class="container"></div>
+<div id="globalTimestamp" class="global-timestamp"></div>
 
 <script>
+// ✅ CONFIG
 const routes = [
     { route: "11X", stop: "38C2E40346BA619E" },
     { route: "14",  stop: "E37FF663075361FE" },
     { route: "15",  stop: "8A25BDD80CA7201C" }
 ];
 
-const stopCache = {};
+let cache = {};
+let stopCache = {};
+let globalTimestamp = "";
 
-// ✅ fetch stop name (Chinese)
+// ✅ fetch stop name
 async function fetchStopName(stopId) {
     if (stopCache[stopId]) return stopCache[stopId];
 
-    try {
-        const res = await fetch(
-            `https://data.etabus.gov.hk/v1/transport/kmb/stop/${stopId}`
-        );
-        const data = await res.json();
+    const res = await fetch(
+        `https://data.etabus.gov.hk/v1/transport/kmb/stop/${stopId}`
+    );
+    const data = await res.json();
 
-        if (data.data) {
-            const name = data.data.name_tc;
-            stopCache[stopId] = name;
-            return name;
-        }
-    } catch {}
-
-    return stopId;
+    const name = data.data.name_tc;
+    stopCache[stopId] = name;
+    return name;
 }
 
-// ✅ detect correct direction + get ETA
-async function detectAndFetchETA(r) {
+// ✅ fetch ETA (correct: using data_timestamp ✅)
+async function fetchETAForRoute(r) {
     const url1 = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/1`;
     const url2 = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/2`;
 
-    try {
-        const [res1, res2] = await Promise.all([fetch(url1), fetch(url2)]);
-        const data1 = await res1.json();
-        const data2 = await res2.json();
+    const [res1, res2] = await Promise.all([fetch(url1), fetch(url2)]);
+    const json1 = await res1.json();
+    const json2 = await res2.json();
 
-        if (data1.data && data1.data.length > 0) {
-            return data1.data; // ✅ correct direction
-        }
-
-        if (data2.data && data2.data.length > 0) {
-            return data2.data;
-        }
-
-    } catch (e) {
-        console.error(e);
+    if (json1.data && json1.data.length > 0) {
+        return {
+            etaData: json1.data,
+            timestamp: json1.data[0].data_timestamp // ✅ CORRECT
+        };
     }
 
-    return [];
+    if (json2.data && json2.data.length > 0) {
+        return {
+            etaData: json2.data,
+            timestamp: json2.data[0].data_timestamp // ✅ CORRECT
+        };
+    }
+
+    return { etaData: [], timestamp: "" };
+}
+
+// ✅ API refresh (30 sec)
+async function updateFromAPI() {
+    globalTimestamp = "";
+
+    for (const r of routes) {
+        const result = await fetchETAForRoute(r);
+        const stopName = await fetchStopName(r.stop);
+
+        // ✅ take first timestamp as global
+        if (!globalTimestamp && result.timestamp) {
+            globalTimestamp = result.timestamp;
+        }
+
+        cache[r.route] = {
+            etaData: result.etaData,
+            stopName
+        };
+    }
+
+    render();
 }
 
 // ✅ format ETA + countdown
@@ -109,64 +161,105 @@ function formatETA(etaTime) {
     const now = new Date();
     const eta = new Date(etaTime);
 
-    const diffMin = Math.floor((eta - now) / 60000);
+    const diffMs = eta - now;
+    if (diffMs <= 0) return "即將到達";
 
-    let countdown;
-    if (diffMin <= 0) countdown = "即將到達";
-    else if (diffMin === 1) countdown = "1 分鐘";
-    else countdown = diffMin + " 分鐘";
+    const totalSec = Math.floor(diffMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
 
-    return `${eta.toLocaleTimeString()} (${countdown})`;
+    const timeStr = eta.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+
+    return `${timeStr} (${min}分 ${sec}秒)`;
 }
 
-// ✅ main render
-async function updateETA() {
+// ✅ live global timestamp
+function formatUpdateTime(ts) {
+    if (!ts) return "";
+
+    const now = new Date();
+    const t = new Date(ts);
+    const diff = Math.floor((now - t) / 1000);
+
+    if (diff < 5) return "剛剛更新";
+    if (diff < 60) return `更新於 ${diff} 秒前`;
+
+    const min = Math.floor(diff / 60);
+    if (min < 60) return `更新於 ${min} 分鐘前`;
+
+    const hr = Math.floor(min / 60);
+    return `更新於 ${hr} 小時前`;
+}
+
+// ✅ render UI (1 sec)
+function render() {
     const container = document.getElementById("etaContainer");
     container.innerHTML = "";
 
     for (const r of routes) {
-
-        const etaData = await detectAndFetchETA(r);
+        const entry = cache[r.route];
 
         let routeName = r.route;
         let etas = ["沒有班次"];
+        let stopName = "";
 
-        const stopName = await fetchStopName(r.stop);
+        if (entry) {
+            stopName = entry.stopName;
+            const data = entry.etaData;
 
-        if (etaData.length > 0) {
+            if (data && data.length > 0) {
+                routeName = `往 ${data[0].dest_tc}`;
 
-            // ✅ ✅ CORRECT SOURCE OF TRUTH
-            const dest = etaData[0].dest_tc;
-            routeName = `往 ${dest}`;
+                etas = data.slice(0, 3).map(e => {
+                    let time = e.eta ? formatETA(e.eta) : "未定時間";
 
-            etas = etaData.slice(0, 3).map(e => {
-                if (!e.eta) return "未定時間";
-                return formatETA(e.eta);
-            });
+                    let remark = "";
+                    if (e.rmk_tc && e.rmk_tc.trim()) {
+                        remark = `<div class="remark">${e.rmk_tc}</div>`;
+                    }
+
+                    return `
+                        <div>
+                            ${time}
+                            ${remark}
+                        </div>
+                    `;
+                });
+            }
         }
 
         const card = document.createElement("div");
         card.className = "card";
 
         card.innerHTML = `
-            <div class="route">${r.route} - ${routeName}</div>
-            <div class="stop">📍 ${stopName}</div>
+            <div class="route-number">${r.route}</div>
+            <div class="destination">${routeName}</div>
+            <div class="stop">${stopName}</div>
+
             <div class="eta">
-                ${etas.map((t,i) =>
-                    i===0
-                        ? `<b style="color:green">• ${t}</b>`
-                        : `• ${t}`
-                ).join("<br>")}
+                ${etas.map((t, i) =>
+                    i === 0
+                        ? `<div class="primary">${t}</div>`
+                        : `<div class="secondary">${t}</div>`
+                ).join("")}
             </div>
         `;
 
         container.appendChild(card);
     }
+
+    // ✅ update bottom timestamp
+    document.getElementById("globalTimestamp").innerText =
+        formatUpdateTime(globalTimestamp);
 }
 
-// ✅ start
-updateETA();
-setInterval(updateETA, 30000);
+// ✅ start system
+updateFromAPI();
+setInterval(updateFromAPI, 30000); // API refresh
+setInterval(render, 1000);         // smooth countdown
 </script>
 
 </body>
