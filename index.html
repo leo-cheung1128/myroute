@@ -3,76 +3,91 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KMB ETA</title>
+
+<title>Bus ETA</title>
 
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="apple-touch-icon" href="icon.png">
+icon.png">
 
 <style>
-body {
-    background: #111;
-    color: white;
-    font-family: Arial;
-    margin: 0;
-    padding: 10px;
+body{
+    background:#111;
+    color:white;
+    font-family:Arial,sans-serif;
+    margin:0;
+    padding:10px;
 }
 
-.container {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+.container{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
 }
 
-/* cards */
-.card {
-    background: #1e1e1e;
-    padding: 15px;
-    border-radius: 12px;
+.card{
+    background:#1e1e1e;
+    padding:15px;
+    border-radius:12px;
 }
 
-.route-number {
-    font-size: 36px;
-    font-weight: bold;
+.operator{
+    display:inline-block;
+    padding:3px 8px;
+    border-radius:6px;
+    font-size:12px;
+    margin-bottom:8px;
+    font-weight:bold;
 }
 
-.destination {
-    font-size: 20px;
+.operator.kmb{
+    background:#d32f2f;
 }
 
-.stop {
-    font-size: 14px;
-    color: #aaa;
+.operator.ctb{
+    background:#1976d2;
 }
 
-.eta {
-    margin-top: 10px;
+.route-number{
+    font-size:36px;
+    font-weight:bold;
 }
 
-/* ETA styles */
-.primary {
-    color: #00ff88;
-    font-size: 18px;
-    font-weight: bold;
+.destination{
+    font-size:20px;
 }
 
-.secondary {
-    color: #ccc;
-    font-size: 18px;
+.stop{
+    font-size:14px;
+    color:#aaa;
 }
 
-.remark {
-    color: orange;
-    font-size: 13px;
+.eta{
+    margin-top:10px;
 }
 
-/* ✅ global timestamp */
-.global-timestamp {
-    position: fixed;
-    bottom: 6px;
-    left: 10px;
-    font-size: 12px;
-    color: #888;
-    opacity: 0.7;
+.primary{
+    color:#00ff88;
+    font-size:18px;
+    font-weight:bold;
+}
+
+.secondary{
+    color:#ccc;
+    font-size:18px;
+}
+
+.remark{
+    color:orange;
+    font-size:13px;
+}
+
+.global-timestamp{
+    position:fixed;
+    bottom:6px;
+    left:10px;
+    font-size:12px;
+    color:#888;
+    opacity:0.8;
 }
 </style>
 </head>
@@ -83,183 +98,373 @@ body {
 <div id="globalTimestamp" class="global-timestamp"></div>
 
 <script>
-// ✅ CONFIG
+
+// ============================
+// CONFIG
+// ============================
+
 const routes = [
-    { route: "11X", stop: "38C2E40346BA619E" },
-    { route: "14",  stop: "E37FF663075361FE" },
-    { route: "15",  stop: "8A25BDD80CA7201C" }
+
+    // KMB
+    { company: "kmb", route: "11X", stop: "38C2E40346BA619E" },
+    { company: "kmb", route: "14",  stop: "E37FF663075361FE" },
+    { company: "kmb", route: "15",  stop: "8A25BDD80CA7201C" },
+
+    // CTB examples
+    // Replace stop IDs with your own
+    { company: "ctb", route: "8X", stop: "001234" },
+    { company: "ctb", route: "780", stop: "002345" }
+
 ];
 
 let cache = {};
 let stopCache = {};
 let globalTimestamp = "";
 
-// ✅ fetch stop name
-async function fetchStopName(stopId) {
-    if (stopCache[stopId]) return stopCache[stopId];
+// ============================
+// STOP NAME
+// ============================
 
-    const res = await fetch(
-        `https://data.etabus.gov.hk/v1/transport/kmb/stop/${stopId}`
-    );
-    const data = await res.json();
+async function fetchStopName(company, stopId){
 
-    const name = data.data.name_tc;
-    stopCache[stopId] = name;
+    const key = `${company}_${stopId}`;
+
+    if(stopCache[key]) {
+        return stopCache[key];
+    }
+
+    let url = "";
+
+    if(company === "kmb"){
+        url =
+        `https://data.etabus.gov.hk/v1/transport/kmb/stop/${stopId}`;
+    }
+
+    if(company === "ctb"){
+        url =
+        `https://rt.data.gov.hk/v2/transport/citybus/stop/${stopId}`;
+    }
+
+    const res = await fetch(url);
+    const json = await res.json();
+
+    const name = json.data?.name_tc || "";
+
+    stopCache[key] = name;
+
     return name;
 }
 
-// ✅ fetch ETA (correct: using data_timestamp ✅)
-async function fetchETAForRoute(r) {
-    const url1 = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/1`;
-    const url2 = `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/2`;
+// ============================
+// ETA FETCH
+// ============================
 
-    const [res1, res2] = await Promise.all([fetch(url1), fetch(url2)]);
-    const json1 = await res1.json();
-    const json2 = await res2.json();
+async function fetchETAForRoute(r){
 
-    if (json1.data && json1.data.length > 0) {
-        return {
-            etaData: json1.data,
-            timestamp: json1.data[0].data_timestamp // ✅ CORRECT
-        };
-    }
+    if(r.company === "kmb"){
 
-    if (json2.data && json2.data.length > 0) {
-        return {
-            etaData: json2.data,
-            timestamp: json2.data[0].data_timestamp // ✅ CORRECT
-        };
-    }
+        const url1 =
+        `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/1`;
 
-    return { etaData: [], timestamp: "" };
-}
+        const url2 =
+        `https://data.etabus.gov.hk/v1/transport/kmb/eta/${r.stop}/${r.route}/2`;
 
-// ✅ API refresh (30 sec)
-async function updateFromAPI() {
-    globalTimestamp = "";
+        const [res1,res2] = await Promise.all([
+            fetch(url1),
+            fetch(url2)
+        ]);
 
-    for (const r of routes) {
-        const result = await fetchETAForRoute(r);
-        const stopName = await fetchStopName(r.stop);
+        const json1 = await res1.json();
+        const json2 = await res2.json();
 
-        // ✅ take first timestamp as global
-        if (!globalTimestamp && result.timestamp) {
-            globalTimestamp = result.timestamp;
+        if(json1.data?.length){
+            return {
+                etaData: json1.data,
+                timestamp: json1.data[0].data_timestamp
+            };
         }
 
-        cache[r.route] = {
-            etaData: result.etaData,
-            stopName
+        if(json2.data?.length){
+            return {
+                etaData: json2.data,
+                timestamp: json2.data[0].data_timestamp
+            };
+        }
+
+        return {
+            etaData: [],
+            timestamp: ""
         };
+    }
+
+    if(r.company === "ctb"){
+
+        const url =
+        `https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${r.stop}/${r.route}`;
+
+        const res = await fetch(url);
+        const json = await res.json();
+
+        const etaData =
+            (json.data || []).filter(
+                x => x.route === r.route
+            );
+
+        return {
+            etaData,
+            timestamp:
+                etaData.length
+                    ? etaData[0].data_timestamp
+                    : ""
+        };
+    }
+
+    return {
+        etaData: [],
+        timestamp: ""
+    };
+}
+
+// ============================
+// API REFRESH
+// ============================
+
+async function updateFromAPI(){
+
+    globalTimestamp = "";
+
+    for(const r of routes){
+
+        try{
+
+            const result =
+                await fetchETAForRoute(r);
+
+            const stopName =
+                await fetchStopName(
+                    r.company,
+                    r.stop
+                );
+
+            if(!globalTimestamp && result.timestamp){
+                globalTimestamp =
+                    result.timestamp;
+            }
+
+            const key =
+                `${r.company}_${r.route}_${r.stop}`;
+
+            cache[key] = {
+                etaData: result.etaData,
+                stopName
+            };
+
+        }catch(err){
+
+            console.error(err);
+
+        }
     }
 
     render();
 }
 
-// ✅ format ETA + countdown
-function formatETA(etaTime) {
+// ============================
+// ETA FORMAT
+// ============================
+
+function formatETA(etaTime){
+
     const now = new Date();
     const eta = new Date(etaTime);
 
     const diffMs = eta - now;
-    if (diffMs <= 0) return "即將到達";
 
-    const totalSec = Math.floor(diffMs / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
+    if(diffMs <= 0){
+        return "即將到達";
+    }
 
-    const timeStr = eta.toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    const totalSec =
+        Math.floor(diffMs / 1000);
+
+    const min =
+        Math.floor(totalSec / 60);
+
+    const sec =
+        totalSec % 60;
+
+    const timeStr =
+        eta.toLocaleTimeString(
+            "zh-HK",
+            {
+                hour:"2-digit",
+                minute:"2-digit"
+            }
+        );
 
     return `${timeStr} (${min}分 ${sec}秒)`;
 }
 
-// ✅ live global timestamp
-function formatUpdateTime(ts) {
-    if (!ts) return "";
+// ============================
+// TIMESTAMP
+// ============================
+
+function formatUpdateTime(ts){
+
+    if(!ts) return "";
 
     const now = new Date();
     const t = new Date(ts);
-    const diff = Math.floor((now - t) / 1000);
 
-    if (diff < 5) return "剛剛更新";
-    if (diff < 60) return `更新於 ${diff} 秒前`;
+    const diff =
+        Math.floor(
+            (now - t) / 1000
+        );
 
-    const min = Math.floor(diff / 60);
-    if (min < 60) return `更新於 ${min} 分鐘前`;
+    if(diff < 5){
+        return "剛剛更新";
+    }
 
-    const hr = Math.floor(min / 60);
+    if(diff < 60){
+        return `更新於 ${diff} 秒前`;
+    }
+
+    const min =
+        Math.floor(diff / 60);
+
+    if(min < 60){
+        return `更新於 ${min} 分鐘前`;
+    }
+
+    const hr =
+        Math.floor(min / 60);
+
     return `更新於 ${hr} 小時前`;
 }
 
-// ✅ render UI (1 sec)
-function render() {
-    const container = document.getElementById("etaContainer");
+// ============================
+// RENDER
+// ============================
+
+function render(){
+
+    const container =
+        document.getElementById(
+            "etaContainer"
+        );
+
     container.innerHTML = "";
 
-    for (const r of routes) {
-        const entry = cache[r.route];
+    for(const r of routes){
 
-        let routeName = r.route;
-        let etas = ["沒有班次"];
+        const key =
+            `${r.company}_${r.route}_${r.stop}`;
+
+        const entry =
+            cache[key];
+
+        let destination = "";
         let stopName = "";
+        let etas = ["沒有班次"];
 
-        if (entry) {
+        if(entry){
+
             stopName = entry.stopName;
-            const data = entry.etaData;
 
-            if (data && data.length > 0) {
-                routeName = `往 ${data[0].dest_tc}`;
+            const data =
+                entry.etaData;
 
-                etas = data.slice(0, 3).map(e => {
-                    let time = e.eta ? formatETA(e.eta) : "未定時間";
+            if(data && data.length){
 
-                    let remark = "";
-                    if (e.rmk_tc && e.rmk_tc.trim()) {
-                        remark = `<span class="remark">${e.rmk_tc}</span>`;
-                    }
+                destination =
+                    `往 ${data[0].dest_tc || data[0].dest_en || ""}`;
 
-                    return `
-                        <div>
-                            ${time}
-                            ${remark}
-                        </div>
-                    `;
-                });
+                etas =
+                    data
+                    .slice(0,3)
+                    .map(e=>{
+
+                        const etaText =
+                            e.eta
+                            ? formatETA(e.eta)
+                            : "未定時間";
+
+                        const remark =
+                            e.rmk_tc
+                            ? `<span class="remark">${e.rmk_tc}</span>`
+                            : "";
+
+                        return `
+                            <div>
+                                ${etaText}
+                                ${remark}
+                            </div>
+                        `;
+                    });
             }
         }
 
-        const card = document.createElement("div");
+        const card =
+            document.createElement("div");
+
         card.className = "card";
 
         card.innerHTML = `
-            <div class="route-number">${r.route}</div>
-            <div class="destination">${routeName}</div>
-            <div class="stop">${stopName}</div>
+            <div class="operator ${r.company}">
+                ${r.company.toUpperCase()}
+            </div>
+
+            <div class="route-number">
+                ${r.route}
+            </div>
+
+            <div class="destination">
+                ${destination}
+            </div>
+
+            <div class="stop">
+                ${stopName}
+            </div>
 
             <div class="eta">
-                ${etas.map((t, i) =>
-                    i === 0
+                ${
+                    etas.map(
+                        (t,i)=>
+                        i===0
                         ? `<div class="primary">${t}</div>`
                         : `<div class="secondary">${t}</div>`
-                ).join("")}
+                    ).join("")
+                }
             </div>
         `;
 
         container.appendChild(card);
     }
 
-    // ✅ update bottom timestamp
-    document.getElementById("globalTimestamp").innerText =
-        formatUpdateTime(globalTimestamp);
+    document.getElementById(
+        "globalTimestamp"
+    ).innerText =
+        formatUpdateTime(
+            globalTimestamp
+        );
 }
 
-// ✅ start system
+// ============================
+// START
+// ============================
+
 updateFromAPI();
-setInterval(updateFromAPI, 30000); // API refresh
-setInterval(render, 1000);         // smooth countdown
+
+setInterval(
+    updateFromAPI,
+    30000
+);
+
+setInterval(
+    render,
+    1000
+);
+
 </script>
 
 </body>
